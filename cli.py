@@ -53,20 +53,22 @@ LIVE_LOG_FILE = Path("/tmp/qwen_live.log")
 
 
 def spawn_popup_terminal(log_path: Path) -> None:
-    """Spawns an interactive Terminal.app window tailing the live Qwen generation."""
-    script = f'''
-    tell application "Terminal"
-        activate
-        do script "clear; echo -e '\\033[1;36m┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓\\033[0m'; echo -e '\\033[1;36m┃         ⚡ QWEN BUILDER LIVE STREAM (Architect -> Builder)   ┃\\033[0m'; echo -e '\\033[1;36m┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛\\033[0m\\n'; tail -n +1 -f '{log_path}'"
-    end tell
-    '''
+    """Spawns an interactive Terminal.app window tailing the live Qwen generation via LaunchServices."""
+    launcher = Path("/tmp/qwen_stream.command")
+    script = (
+        '#!/usr/bin/env bash\n'
+        'printf "\\e]2;%s\\a" "⚡ Qwen Builder Live View"\n'
+        'clear\n'
+        'echo -e "\\033[1;36m┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓\\033[0m"\n'
+        'echo -e "\\033[1;36m┃         ⚡ QWEN BUILDER LIVE STREAM (Architect -> Builder)   ┃\\033[0m"\n'
+        'echo -e "\\033[1;36m┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛\\033[0m\\n"\n'
+        f'tail -n +1 -f "{log_path}"\n'
+    )
     try:
-        subprocess.run(
-            ["osascript", "-e", script],
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-            check=False,
-        )
+        launcher.write_text(script, encoding="utf-8")
+        launcher.chmod(0o755)
+        # LaunchServices creates a frontmost standalone window on the active desktop
+        subprocess.run(["open", str(launcher)], check=False)
     except Exception:
         pass
 
@@ -205,23 +207,34 @@ def main():
     sys.stdout.flush()
 
     try:
+        import pty
+        master, slave = pty.openpty()
+
         proc = subprocess.Popen(
             cmd,
             cwd=cwd,
             stdin=subprocess.DEVNULL,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-            text=True,
-            bufsize=1,
+            stdout=slave,
+            stderr=slave,
+            close_fds=True,
         )
+        os.close(slave)
 
         collected_output = []
         with open(LIVE_LOG_FILE, "a", encoding="utf-8") as f:
-            for line in iter(proc.stdout.readline, ""):
-                f.write(line)
-                f.flush()
-                collected_output.append(line)
-
+            while True:
+                try:
+                    data = os.read(master, 1024)
+                    if not data:
+                        break
+                    text = data.decode("utf-8", errors="replace")
+                    f.write(text)
+                    f.flush()
+                    collected_output.append(text)
+                except OSError:
+                    # pty throws EIO on EOF under Linux/macOS
+                    break
+        os.close(master)
         proc.wait()
 
         with open(LIVE_LOG_FILE, "a", encoding="utf-8") as f:
