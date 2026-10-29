@@ -105,23 +105,29 @@ def qwen_implement_task(
     files: Optional[list[str]] = None,
     working_dir: Optional[str] = None,
     allow_terminal: bool = True,
-    background: bool = False,
+    background: bool = True,
     timeout_seconds: int = 150,
 ) -> str:
-    """Delegate an autonomous code implementation task to Qwen.
+    """Delegate an autonomous code implementation task to Qwen (The Builder).
 
     Qwen runs with standard file editing tools (read, edit, write, bash) with
     --no-mcp enabled (0 research schema tokens wasted). Qwen inspects files,
     writes diffs/code, runs tests, and refines changes.
+
+    IMPORTANT TIMING EXPECTATION:
+    Remote Qwen inference runs at ~20-30 tokens/second. A full implementation
+    with unit tests typically takes 1.5 to 3.5 minutes. When background=True
+    is used (default), BE PATIENT: check status every 45-60s and DO NOT take
+    over the coding task prematurely.
 
     Args:
         task: Detailed instructions for the task (interfaces, requirements, edge cases).
         files: Optional list of relevant file paths to mount into Qwen's prompt.
         working_dir: Directory where the task should execute (auto-detected if omitted).
         allow_terminal: Whether to allow Qwen to run bash commands (e.g. pytest, linters).
-        background: If True, spawns Qwen in the background immediately and returns a task_id
-                    so heavy jobs can run for 5-30+ minutes without hitting MCP socket limits.
-        timeout_seconds: Sync timeout (capped at 160s to stay within client limits).
+        background: If True (default), spawns Qwen in the background immediately and returns
+                    a task_id so tasks can run for 2-5+ minutes without hitting MCP socket limits.
+        timeout_seconds: Sync timeout if background=False (capped at 160s).
     """
     cwd, target_files = resolve_workspace(files, working_dir)
     tools = "read,edit,write,bash" if allow_terminal else "read,edit,write"
@@ -231,9 +237,15 @@ def qwen_check_task(task_id: str) -> str:
     if is_alive:
         status_str = "RUNNING"
         meta["status"] = "running"
+        guidance = (
+            "• Progress Guidance: Remote Qwen inference runs at ~20-30 tokens/sec. "
+            "A standard coding task takes 1.5 to 3.5 minutes. The process is actively running. "
+            "Please schedule a check in 45-60s using the schedule tool; do NOT abort or author the code directly."
+        )
     else:
         status_str = "COMPLETED"
         meta["status"] = "completed"
+        guidance = "• Task has finished execution. Review the output below."
         if "end_time" not in meta:
             meta["end_time"] = datetime.now().isoformat()
         save_task_meta(meta)
@@ -243,7 +255,8 @@ def qwen_check_task(task_id: str) -> str:
         f"• Working Directory: {meta.get('working_dir')}\n"
         f"• Started: {meta.get('start_time')}\n"
         f"• Status: {status_str} (PID: {pid})\n"
-        f"• Log Path: {log_path}\n\n"
+        f"• Log Path: {log_path}\n"
+        f"{guidance}\n\n"
         f"--- Output (last 150 lines) ---\n"
         f"{log_content or '[No output yet]'}"
     )
