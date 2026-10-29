@@ -107,6 +107,7 @@ def qwen_implement_task(
     allow_terminal: bool = True,
     background: bool = True,
     timeout_seconds: int = 150,
+    preset: str = "coding",
 ) -> str:
     """Delegate an autonomous code implementation task to Qwen (The Builder).
 
@@ -128,6 +129,7 @@ def qwen_implement_task(
         background: If True (default), spawns Qwen in the background immediately and returns
                     a task_id so tasks can run for 2-5+ minutes without hitting MCP socket limits.
         timeout_seconds: Sync timeout if background=False (capped at 160s).
+        preset: Generation preset to use ('coding' for implementation, 'thinking' for review/reasoning).
     """
     cwd, target_files = resolve_workspace(files, working_dir)
     tools = "read,edit,write,bash" if allow_terminal else "read,edit,write"
@@ -143,7 +145,12 @@ def qwen_implement_task(
     for f_path in target_files:
         cmd.append(f"@{f_path}")
 
-    cmd.append(task)
+    # Enforce requested preset via pi-generation-config (e.g. 'coding' or 'thinking')
+    pi_task = task
+    if not pi_task.lstrip().startswith("["):
+        pi_task = f"[preset: {preset}]\n{pi_task}"
+
+    cmd.append(pi_task)
 
     # --- ASYNC BACKGROUND MODE ---
     if background:

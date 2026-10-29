@@ -57,11 +57,28 @@ This will automatically update `~/.gemini/config/mcp_config.json`:
 - Adds `qwen-delegate` (local stdio server)
 - Adds `d1-decision` (remote Streamable HTTP server on the Mac mini)
 
-## Standalone Terminal Usage
+## Standalone Terminal & Background Delegation Usage
 
-You can also run Qwen as a builder directly from your shell without launching an interactive UI:
+You can run Qwen as a builder directly from your shell or delegate via Antigravity background tasks:
 
 ```bash
 cd /Users/edmundnhs/repos/qwen-delegate
-./run_cli.sh "Refactor calculate_scores to handle empty lists" @src/metrics.py
+
+# 1. Standard Code Implementation (preset: coding, temp=0.2)
+./run_cli.sh "Refactor calculate_scores to handle empty lists" src/metrics.py
+
+# 2. File / Artifact spec instruction (Zero Token Duplication)
+./run_cli.sh -f spec.md src/metrics.py
+
+# 3. Code Review & Reasoning Mode (preset: thinking, temp=1.0)
+./run_cli.sh -p thinking "Review this module for race conditions and explain thread safety" src/worker.py
+
+# 4. With Live Popup Window on macOS
+./run_cli.sh --popup -f spec.md src/metrics.py
+# (Or set `export QWEN_POPUP=1` to always pop up automatically)
 ```
+
+### Visibility & Live Streaming
+- **Live Popup Window (Default: Active)**: Automatically pops up an active Terminal.app window tailing `/tmp/qwen_live.log`, displaying every token and tool call in real time while Qwen generates (disable via `--no-popup` or `export QWEN_POPUP=0`).
+- **Local Inspection File**: Every dispatch writes the complete instruction payload to `~/.gemini/last_delegation.md` for instant zero-token inspection.
+- **Zero Wakeup Bloat**: Process `stdout` returns only the concise completion output and diff, avoiding prompt re-echoing into Gemini's context window.
