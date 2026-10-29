@@ -23,13 +23,60 @@ mcp = FastMCP(
 QWEN_BASE_URL, QWEN_API_KEY, QWEN_MODEL = load_qwen_config()
 
 
+def resolve_workspace(files: Optional[list[str]], explicit_cwd: Optional[str]) -> tuple[str, list[str]]:
+    """Automatically resolves the correct working directory and file attachments."""
+    if explicit_cwd and os.path.exists(explicit_cwd):
+        base_dir = Path(explicit_cwd).resolve()
+    else:
+        base_dir = Path(os.getcwd()).resolve()
+
+    resolved_files = []
+    repos_dir = Path.home() / "repos"
+
+    if files:
+        for f in files:
+            p = Path(f)
+            if p.is_absolute() and p.exists():
+                resolved_files.append(str(p))
+                # If explicit cwd wasn't provided, infer from file path
+                if not explicit_cwd:
+                    # Look for git root or parent dir
+                    curr = p.parent
+                    while curr != curr.parent:
+                        if (curr / ".git").exists():
+                            base_dir = curr
+                            break
+                        curr = curr.parent
+            else:
+                # Check in current base_dir
+                local_path = base_dir / f
+                if local_path.exists():
+                    resolved_files.append(str(local_path))
+                elif repos_dir.exists():
+                    # Search across local repositories
+                    matches = list(repos_dir.glob(f"*/{f}"))
+                    if matches:
+                        match = matches[0]
+                        resolved_files.append(str(match))
+                        if not explicit_cwd:
+                            # Set base_dir to the matched repo
+                            curr = match.parent
+                            while curr != curr.parent and curr != repos_dir:
+                                if (curr / ".git").exists():
+                                    base_dir = curr
+                                    break
+                                curr = curr.parent
+
+    return str(base_dir), resolved_files
+
+
 @mcp.tool()
 def qwen_implement_task(
     task: str,
     files: Optional[list[str]] = None,
     working_dir: Optional[str] = None,
     allow_terminal: bool = True,
-    timeout_seconds: int = 240,
+    timeout_seconds: int = 150,
 ) -> str:
     """Delegate an autonomous code implementation task to Qwen.
 
@@ -40,11 +87,13 @@ def qwen_implement_task(
     Args:
         task: Detailed instructions for the task (interfaces, requirements, edge cases).
         files: Optional list of relevant file paths to explicitly mount into Qwen's prompt.
-        working_dir: Directory where the task should execute (default: current directory).
+        working_dir: Directory where the task should execute (auto-detected from files if omitted).
         allow_terminal: Whether to allow Qwen to run bash commands (e.g. pytest, linters).
-        timeout_seconds: Timeout before terminating the process (default: 240s).
+        timeout_seconds: Timeout before terminating the process (capped at 160s to stay within client limits).
     """
-    cwd = working_dir if working_dir and os.path.exists(working_dir) else os.getcwd()
+    # Cap timeout to 160s max to prevent Antigravity client-side 180s hard disconnect
+    safe_timeout = min(max(timeout_seconds, 10), 160)
+    cwd, target_files = resolve_workspace(files, working_dir)
     tools = "read,edit,write,bash" if allow_terminal else "read,edit,write"
 
     cmd = [
@@ -55,12 +104,8 @@ def qwen_implement_task(
         "-p",                           # Print/non-interactive mode
     ]
 
-    # Add targeted file attachments if specified
-    if files:
-        for f in files:
-            path_obj = Path(cwd) / f if not os.path.isabs(f) else Path(f)
-            if path_obj.exists():
-                cmd.append(f"@{path_obj}")
+    for f_path in target_files:
+        cmd.append(f"@{f_path}")
 
     cmd.append(task)
 
@@ -70,14 +115,20 @@ def qwen_implement_task(
             cwd=cwd,
             capture_output=True,
             text=True,
-            timeout=timeout_seconds,
+            timeout=safe_timeout,
         )
         output = proc.stdout.strip()
         if proc.returncode != 0 and proc.stderr:
             output += f"\n[Process stderr (exit {proc.returncode})]:\n{proc.stderr.strip()}"
         return output or "Task completed with no standard output."
-    except subprocess.TimeoutExpired:
-        return f"Error: Qwen implementation timed out after {timeout_seconds} seconds."
+    except subprocess.TimeoutExpired as te:
+        partial = (te.stdout.decode() if isinstance(te.stdout, bytes) else str(te.stdout or "")).strip()
+        return (
+            f"Notice: Qwen implementation hit the safety timeout ({safe_timeout}s).\n"
+            f"Target Directory: {cwd}\n"
+            f"Partial output before timeout:\n{partial or '[No partial output captured]'}\n\n"
+            "Tip: For heavy scripts or data processing, delegate isolated code edits rather than long-running data execution."
+        )
     except Exception as e:
         return f"Error executing Qwen task: {type(e).__name__}: {str(e)}"
 
