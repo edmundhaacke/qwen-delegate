@@ -25,17 +25,23 @@ A dedicated local bridge that lets **Gemini (The Architect)** delegate code impl
 
 ## Available MCP Tools Exposed to Gemini
 
-1. **`qwen_implement_task(task, files, working_dir, allow_terminal)`**:
-   - Runs Qwen in autonomous coding mode via `pi`.
-   - Strips all 178 research MCP tools so no context is wasted.
-   - Modifies files directly on disk, runs unit tests, and returns summary output.
-2. **`qwen_raw_complete(prompt, system_prompt, max_tokens)`**:
+1. **`qwen_implement_task(task, files, working_dir, allow_terminal, background)`**:
+   - Runs Qwen in autonomous coding mode via `pi --no-mcp`.
+   - **`background=False` (default)**: Synchronous execution up to 160s (ideal for quick function writing, refactoring, unit tests).
+   - **`background=True`**: Asynchronous execution. Dispatches immediately, returns a `task_id` in 0.1s, and runs in the background for 5–30+ minutes without ever hitting Antigravity's 180s MCP client timeout.
+2. **`qwen_check_task(task_id)`**:
+   - Inspects the status (`RUNNING`, `COMPLETED`, `FAILED`), elapsed time, and streams the latest output logs.
+3. **`qwen_list_tasks(limit)`**:
+   - Lists recent background tasks and their current execution state.
+4. **`qwen_cancel_task(task_id)`**:
+   - Gracefully terminates a running background task process group.
+5. **`qwen_raw_complete(prompt, system_prompt, max_tokens)`**:
    - Direct high-speed API call to `https://test.edmundhaacke.com/v1/chat/completions`.
    - Used when Gemini needs a quick algorithm, regex, or code snippet without file I/O.
-3. **`d1_verify_claim(claim, context)`**:
+6. **`d1_verify_claim(claim, context)`**:
    - Zero-generation empirical claim verifier using native MLX d1-2B on the M1 Mac mini (`100.126.106.26:8004`).
    - Returns calibrated probabilities and exact extracted span.
-4. **`d1_score_document(text, metrics, criteria)`**:
+7. **`d1_score_document(text, metrics, criteria)`**:
    - Zero-generation ordinal scoring along custom dimensions.
 
 ## Installation & Setup
